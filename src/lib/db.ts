@@ -44,7 +44,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_email
 `;
 
 async function createDb(): Promise<Db> {
-  const url = process.env.DATABASE_URL;
+  // Vercel's Neon integration may name it either way.
+  const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+
+  if (!url && process.env.VERCEL) {
+    throw new Error(
+      "No database configured: connect Neon in Vercel → Storage (sets DATABASE_URL), then redeploy.",
+    );
+  }
 
   if (url) {
     const { default: postgres } = await import("postgres");
