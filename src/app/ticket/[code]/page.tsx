@@ -15,7 +15,6 @@ export default async function TicketPage({ params }: PageProps<"/ticket/[code]">
 
   const ticketUrl = `${await getBaseUrl()}/ticket/${ticket.code}`;
   const qrSvg = await QRCode.toString(ticketUrl, { type: "svg", margin: 1 });
-  const number = String(ticket.ticket_number).padStart(3, "0");
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 py-10">
@@ -28,7 +27,7 @@ export default async function TicketPage({ params }: PageProps<"/ticket/[code]">
 
       <article className="mt-6 overflow-hidden rounded-3xl bg-white text-black">
         <div className="bg-black px-6 pb-5 pt-6 text-white">
-          <p className="text-xs uppercase tracking-[0.2em] text-accent">Ticket #{number}</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-accent">Ticket {ticket.ticket_id}</p>
           <p className="mt-1 text-2xl font-extrabold">{EVENT.name}</p>
           <p className="mt-1 text-sm text-zinc-400">
             {formatEventDate(EVENT.startsAt)} · {EVENT.venue}
@@ -36,7 +35,7 @@ export default async function TicketPage({ params }: PageProps<"/ticket/[code]">
         </div>
         <div className="flex flex-col items-center px-6 py-6">
           <div className="w-56" dangerouslySetInnerHTML={{ __html: qrSvg }} />
-          <p className="mt-3 font-mono text-lg font-bold tracking-widest">{ticket.code}</p>
+          <p className="mt-3 font-mono text-lg font-bold tracking-widest">{ticket.ticket_id}</p>
           <p className="mt-1 text-sm text-zinc-500">{ticket.name}</p>
         </div>
       </article>

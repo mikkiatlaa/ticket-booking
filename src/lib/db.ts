@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS tickets (
 -- One active ticket per email address per event.
 CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_email
   ON tickets (event_id, lower(email)) WHERE status <> 'CANCELLED';
+
+-- Human-readable ID (DD-001), computed by Postgres from ticket_number.
+-- Public-facing only: the random "code" stays the secret in links and QR codes.
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_id TEXT
+  GENERATED ALWAYS AS ('${EVENT.ticketPrefix}-' || lpad(ticket_number::text, 3, '0')) STORED;
 `;
 
 async function createDb(): Promise<Db> {

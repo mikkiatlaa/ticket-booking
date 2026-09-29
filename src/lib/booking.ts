@@ -4,6 +4,7 @@ import { EVENT } from "./event";
 
 export type Ticket = {
   code: string;
+  ticket_id: string;
   event_id: string;
   ticket_number: number;
   name: string;
@@ -27,7 +28,7 @@ const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 function newTicketCode() {
   let code = "";
   for (let i = 0; i < 8; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
-  return `${EVENT.ticketPrefix}-${code.slice(0, 4)}-${code.slice(4)}`;
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
 }
 
 export function normalizeEmail(email: string) {
