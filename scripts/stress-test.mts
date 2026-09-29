@@ -61,7 +61,8 @@ console.log(`  sold out              ${count("SOLD_OUT")}`);
 console.log(`  already registered    ${count("ALREADY_REGISTERED")}`);
 console.log(`  counter               ${stats.reserved} / ${stats.capacity}\n`);
 
-const checks: [string, boolean][] = [
+const checks: [string, boolean][] = [];
+checks.push(
   ["never more tickets than capacity", rows <= EVENT.capacity],
   ["event sells out exactly", rows === EVENT.capacity],
   ["counter matches tickets in database", stats.reserved === rows],
@@ -69,8 +70,29 @@ const checks: [string, boolean][] = [
   ["double-click returns the same ticket", clickerTickets.size === 1 && replayed.length === 2],
   ["second signup with same email is refused", count("ALREADY_REGISTERED") === 1],
   ["one ticket per email", maxPerEmail <= 1],
-];
+);
 for (const [label, pass] of checks) console.log(`  ${pass ? "PASS" : "FAIL"}  ${label}`);
 
+// --- Door check-in: ten admins scan the same ticket at the same moment. ---
+const { checkIn, undoCheckIn, listGuests } = await import("../src/lib/checkin");
+const target = created[0].ok ? created[0].ticket : null;
+const scanned = `https://example.test/ticket/${target!.code}`; // what the QR contains
+const scans = await Promise.all(Array.from({ length: 10 }, (_, i) => checkIn(scanned, `Door ${i}`)));
+const scanCount = (r: string) => scans.filter((s) => s.result === r).length;
+const afterScan = await listGuests();
+const undone = await undoCheckIn(target!.code);
+const afterUndo = await listGuests();
+const fake = await checkIn("https://example.test/ticket/ZZZZ-ZZZZ", "Door 0");
+const junk = await checkIn("hello world", "Door 0");
+
+console.log(`\n  10 simultaneous scans: ${scanCount("OK")} let in, ${scanCount("ALREADY_IN")} told "already inside"\n`);
+checks.push(
+  ["same ticket scanned 10x lets exactly 1 person in", scanCount("OK") === 1 && scanCount("ALREADY_IN") === 9],
+  ["guest list shows them inside", afterScan.counts.inside === 1],
+  ["undo puts them back to not arrived", !!undone && afterUndo.counts.inside === 0],
+  ["unknown ticket is rejected", fake.result === "INVALID"],
+  ["non-ticket QR is rejected", junk.result === "INVALID"],
+);
+for (const [label, pass] of checks.slice(-5)) console.log(`  ${pass ? "PASS" : "FAIL"}  ${label}`);
 rmSync(dir, { recursive: true, force: true });
 process.exit(checks.every(([, pass]) => pass) ? 0 : 1);

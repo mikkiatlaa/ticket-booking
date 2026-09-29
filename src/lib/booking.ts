@@ -9,10 +9,12 @@ export type Ticket = {
   ticket_number: number;
   name: string;
   email: string;
-  status: "CONFIRMED" | "CANCELLED";
+  status: "CONFIRMED" | "CHECKED_IN" | "CANCELLED";
   email_status: "PENDING" | "SENT" | "FAILED" | "SKIPPED";
   email_error: string | null;
   created_at: string;
+  checked_in_at: string | null;
+  checked_in_by: string | null;
 };
 
 export type Stats = { capacity: number; reserved: number; remaining: number };

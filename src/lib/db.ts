@@ -9,7 +9,9 @@ export interface Db {
   transaction<R>(fn: (tx: Db) => Promise<R>): Promise<R>;
 }
 
-const SCHEMA = `
+// Each entry runs on startup, so every statement must be safe to repeat.
+const SCHEMA = [
+  `
 CREATE TABLE IF NOT EXISTS events (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -19,16 +21,15 @@ CREATE TABLE IF NOT EXISTS events (
   reserved    INT NOT NULL DEFAULT 0,
   -- Last line of defence: the database itself refuses to oversell.
   CONSTRAINT not_oversold CHECK (reserved <= capacity)
-);
-
+)`,
+  `
 CREATE TABLE IF NOT EXISTS tickets (
   code             TEXT PRIMARY KEY,
   event_id         TEXT NOT NULL REFERENCES events(id),
   ticket_number    INT NOT NULL,
   name             TEXT NOT NULL,
   email            TEXT NOT NULL,
-  status           TEXT NOT NULL DEFAULT 'CONFIRMED'
-                   CHECK (status IN ('CONFIRMED', 'CANCELLED')),
+  status           TEXT NOT NULL DEFAULT 'CONFIRMED',
   -- Same form submission twice (double click, retry) -> same ticket.
   idempotency_key  TEXT NOT NULL UNIQUE,
   email_status     TEXT NOT NULL DEFAULT 'PENDING'
@@ -36,17 +37,31 @@ CREATE TABLE IF NOT EXISTS tickets (
   email_error      TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (event_id, ticket_number)
-);
-
--- One active ticket per email address per event.
-CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_email
-  ON tickets (event_id, lower(email)) WHERE status <> 'CANCELLED';
-
--- Human-readable ID (DD-001), computed by Postgres from ticket_number.
--- Public-facing only: the random "code" stays the secret in links and QR codes.
-ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_id TEXT
-  GENERATED ALWAYS AS ('${EVENT.ticketPrefix}-' || lpad(ticket_number::text, 3, '0')) STORED;
-`;
+)`,
+  // One active ticket per email address per event.
+  `CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_email
+     ON tickets (event_id, lower(email)) WHERE status <> 'CANCELLED'`,
+  // Human-readable ID (DD-001), computed by Postgres from ticket_number.
+  // Public-facing only: the random "code" stays the secret in links and QR codes.
+  `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_id TEXT
+     GENERATED ALWAYS AS ('${EVENT.ticketPrefix}-' || lpad(ticket_number::text, 3, '0')) STORED`,
+  // Door check-in: who scanned the ticket, and when.
+  `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ`,
+  `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS checked_in_by TEXT`,
+  // Allowed ticket states. Replaced only when the list changes, so older
+  // databases (created before CHECKED_IN existed) get upgraded in place.
+  `DO $$ BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+        WHERE conname = 'tickets_status_check'
+          AND pg_get_constraintdef(oid) LIKE '%CHECKED_IN%'
+     ) THEN
+       ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+       ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+         CHECK (status IN ('CONFIRMED', 'CHECKED_IN', 'CANCELLED'));
+     END IF;
+   END $$`,
+];
 
 async function createDb(): Promise<Db> {
   // Vercel's Neon integration may name it either way.
@@ -87,9 +102,7 @@ async function createDb(): Promise<Db> {
 
 async function init(): Promise<Db> {
   const db = await createDb();
-  for (const statement of SCHEMA.split(";").map((s) => s.trim()).filter(Boolean)) {
-    await db.query(statement);
-  }
+  for (const statement of SCHEMA) await db.query(statement);
   await db.query(
     `INSERT INTO events (id, name, venue, starts_at, capacity)
      VALUES ($1, $2, $3, $4, $5)

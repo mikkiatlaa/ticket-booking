@@ -19,7 +19,7 @@ export default async function TicketPage({ params }: PageProps<"/ticket/[code]">
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 py-10">
       <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">
-        {ticket.status === "CONFIRMED" ? "You're in" : "Cancelled"}
+        {{ CONFIRMED: "You're in", CHECKED_IN: "Checked in at the door", CANCELLED: "Cancelled" }[ticket.status]}
       </p>
       <h1 className="mt-3 text-3xl font-extrabold tracking-tight">See you there, {ticket.name.split(" ")[0]}.</h1>
 
