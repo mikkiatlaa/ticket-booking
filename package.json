@@ -1,0 +1,37 @@
+{
+  "name": "ticket-booking",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "stress": "tsx scripts/stress-test.mts",
+    "dev:lan": "next dev -H 0.0.0.0",
+    "reset": "rm -rf .pglite",
+    "demo": "next build && next start -H 0.0.0.0"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "next": "16.3.7",
+    "nodemailer": "^10.0.12",
+    "postgres": "^3.4.9",
+    "qrcode": "^1.5.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.7",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}
