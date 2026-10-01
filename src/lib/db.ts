@@ -148,7 +148,7 @@ async function init(): Promise<Db> {
       `INSERT INTO events (id, slug, name, organizer, genre, tagline, venue, area, starts_at, ends_at,
                            capacity, ticket_prefix, lineup)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-               ARRAY(SELECT jsonb_array_elements_text($13::jsonb)))
+               ARRAY(SELECT jsonb_array_elements_text(($13::text)::jsonb)))
        ON CONFLICT (id) DO UPDATE SET
          slug = EXCLUDED.slug,
          name = EXCLUDED.name,
