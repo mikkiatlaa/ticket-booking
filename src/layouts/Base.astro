@@ -1,0 +1,55 @@
+---
+import "../styles/global.css";
+import AdminBar from "../components/AdminBar.astro";
+import { getAdmin } from "../lib/admin-auth";
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Which nav link is the current page. */
+  current?: "home" | "events";
+  /** Ticket and admin pages must not show up in search engines. */
+  noindex?: boolean;
+}
+
+const { title, description = "Find a show, get a free ticket, show the QR code at the door.", current, noindex = false } = Astro.props;
+// Admins see a blue bar on the public site too, so they always know which side they are on.
+const admin = getAdmin(Astro.cookies);
+const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url.origin);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex, nofollow" /> : <link rel="canonical" href={canonical} />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <slot name="head" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    {admin && <AdminBar admin={admin} where="public" />}
+    <header class="site-header">
+      <div class="wrap">
+        <a class="logo" href="/" aria-label="Home">UB</a>
+        <nav class="nav" aria-label="Main">
+          <a href="/" aria-current={current === "home" ? "page" : undefined}>Home</a>
+          <a href="/events" aria-current={current === "events" ? "page" : undefined}>Events</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>[PLATFORM NAME] · Copenhagen</span>
+        <a href="#main">Back to top</a>
+      </div>
+    </footer>
+  </body>
+</html>

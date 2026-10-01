@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { cookies } from "next/headers";
+import type { AstroCookies } from "astro";
 
-// Admins log in with a shared PIN (ADMIN_PIN env var) plus their own name,
+// Door staff log in with a shared PIN (ADMIN_PIN env var) plus their own name,
 // which is recorded on every ticket they scan. The session is a signed
 // cookie: "name.expiry.signature" — no database table needed.
 
@@ -28,14 +28,14 @@ export function adminEnabled() {
   return pin() !== null;
 }
 
-export async function login(input: { pin: string; name: string }) {
+export function login(cookies: AstroCookies, input: { pin: string; name: string }) {
   const secret = pin();
   const name = input.name.trim().slice(0, 40);
   if (!secret || !name || !safeEqual(input.pin, secret)) return false;
 
   const expires = Date.now() + SESSION_HOURS * 3600_000;
   const payload = `${Buffer.from(name).toString("base64url")}.${expires}`;
-  (await cookies()).set(COOKIE, `${payload}.${sign(payload, secret)}`, {
+  cookies.set(COOKIE, `${payload}.${sign(payload, secret)}`, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -45,14 +45,14 @@ export async function login(input: { pin: string; name: string }) {
   return true;
 }
 
-export async function logout() {
-  (await cookies()).delete(COOKIE);
+export function logout(cookies: AstroCookies) {
+  cookies.delete(COOKIE, { path: "/" });
 }
 
 /** Returns the logged-in admin's name, or null. */
-export async function getAdmin(): Promise<string | null> {
+export function getAdmin(cookies: AstroCookies): string | null {
   const secret = pin();
-  const value = (await cookies()).get(COOKIE)?.value;
+  const value = cookies.get(COOKIE)?.value;
   if (!secret || !value) return null;
 
   const [name64, expires, signature] = value.split(".");
@@ -63,8 +63,8 @@ export async function getAdmin(): Promise<string | null> {
 }
 
 /** For API routes: the admin's name, or a ready-made 401 response. */
-export async function requireAdmin(): Promise<{ admin: string } | { response: Response }> {
-  const admin = await getAdmin();
+export function requireAdmin(cookies: AstroCookies): { admin: string } | { response: Response } {
+  const admin = getAdmin(cookies);
   if (admin) return { admin };
   return { response: Response.json({ error: "Not logged in" }, { status: 401 }) };
 }

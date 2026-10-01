@@ -1,0 +1,64 @@
+---
+import PosterCard from "../components/PosterCard.astro";
+import Base from "../layouts/Base.astro";
+import { dateParts, formatTime, listEvents } from "../lib/event";
+
+const events = await listEvents({ liveOnly: true });
+const [next, ...rest] = events;
+const nextDate = next ? dateParts(next.startsAt) : null;
+---
+
+<Base title="Free shows in Copenhagen" description="Shows, parties and sessions from independent organizers in Copenhagen. Find one, sign up and get a free ticket." current="home">
+  <section class="wrap hero">
+    <h1 class="display">Copenhagen underground</h1>
+    <p class="lede">Shows, parties and sessions from independent organizers. Find one, sign up and keep your ticket on your phone.</p>
+  </section>
+
+  {
+    next && nextDate && (
+      <section class="wrap" aria-labelledby="next-heading">
+        <a class="featured" href={`/events/${next.slug}`}>
+          <div class="featured__art">
+            <span class="eyebrow">Next up</span>
+            <div class="featured__date">
+              <span>{nextDate.day}</span>
+              <span class="featured__month">{nextDate.month}</span>
+            </div>
+          </div>
+          <div class="featured__body">
+            <div class="poster__tags">
+              {next.genre && <span class="tag">{next.genre}</span>}
+              <span class="tag tag--green">Free</span>
+            </div>
+            <h2 id="next-heading" class="title">{next.name}</h2>
+            {next.organizer && <p class="eyebrow">By {next.organizer}</p>}
+            <p class="white">
+              {nextDate.short} · Doors {formatTime(next.startsAt)}
+              {next.endsAt && ` · Ends ${formatTime(next.endsAt)}`}
+              <br />
+              {[next.venue, next.area].filter(Boolean).join(", ")}
+            </p>
+            <span class="btn btn--primary">Get my free ticket</span>
+          </div>
+        </a>
+      </section>
+    )
+  }
+
+  <section class="wrap section" aria-labelledby="whats-on">
+    <div class="section__head">
+      <h2 id="whats-on" class="title">What's on</h2>
+      <span class="eyebrow green">{events.length} {events.length === 1 ? "event" : "events"}</span>
+    </div>
+    {
+      rest.length > 0 ? (
+        <div class="grid">
+          {rest.map((event) => <PosterCard event={event} />)}
+        </div>
+      ) : (
+        <p class="muted">{events.length === 0 ? "No events yet. Check back soon." : "More events are on the way."}</p>
+      )
+    }
+    <p class="section__more"><a class="btn btn--secondary" href="/events">See all events</a></p>
+  </section>
+</Base>

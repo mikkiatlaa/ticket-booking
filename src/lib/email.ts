@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import QRCode from "qrcode";
 import { setEmailStatus, type Ticket } from "./booking";
-import { EVENT, formatEventDate } from "./event";
+import { formatEventDay, formatTime, type Event } from "./event";
 
 export function emailConfigured() {
   return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
@@ -15,22 +15,44 @@ export function ticketQr(ticketUrl: string) {
   return QRCode.toBuffer(ticketUrl, { width: 480, margin: 1 });
 }
 
-export function renderTicketEmail(ticket: Ticket, ticketUrl: string, qrSrc: string) {
+// Brand colours, written out because email clients ignore CSS variables.
+const BLACK = "#000000";
+const PINK = "#f3a8ff";
+const GREEN = "#18e730";
+
+/** The confirmation email. Inline styles and tables only: that is what email apps understand. */
+export function renderTicketEmail(ticket: Ticket, event: Event, ticketUrl: string, qrSrc: string) {
+  const where = [event.venue, event.area].filter(Boolean).join(", ");
+  const doors = `Doors ${formatTime(event.startsAt)}`;
   return `<!doctype html>
-<html><body style="margin:0;background:#f4f4f5;font-family:Helvetica,Arial,sans-serif;color:#111">
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
-    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#fff;border-radius:16px;overflow:hidden">
-      <tr><td style="background:#111;color:#fff;padding:28px 28px 22px">
-        <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#a3e635">You're in · Ticket ${ticket.ticket_id}</div>
-        <div style="font-size:26px;font-weight:800;margin-top:8px">${escapeHtml(EVENT.name)}</div>
-        <div style="font-size:14px;color:#d4d4d8;margin-top:6px">${escapeHtml(formatEventDate(EVENT.startsAt))} · ${escapeHtml(EVENT.venue)}</div>
+<html lang="en"><body style="margin:0;background:${BLACK};font-family:Helvetica,Arial,sans-serif;color:${PINK}">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:${BLACK};padding:28px 12px"><tr><td align="center">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:480px">
+      <tr><td style="padding:0 0 18px;font-family:'Arial Black',Arial,sans-serif;font-size:22px;letter-spacing:1px;color:${PINK}">UB</td></tr>
+      <tr><td style="border-top:2px solid ${PINK};padding:28px 0 8px">
+        <div style="font-family:'Arial Black',Arial,sans-serif;font-size:44px;line-height:1;text-transform:uppercase;color:${GREEN}">Locked in.</div>
+        <p style="margin:16px 0 0;font-size:16px;line-height:1.5;color:${PINK}">Hi ${escapeHtml(ticket.name)}, your free ticket is confirmed. Show the QR code below at the door.</p>
       </td></tr>
-      <tr><td style="padding:28px" align="center">
-        <p style="margin:0 0 20px;font-size:15px;text-align:left">Hi ${escapeHtml(ticket.name)}, your free ticket is confirmed. Show this QR code at the door.</p>
-        <img src="${qrSrc}" width="240" height="240" alt="Ticket QR code" style="display:block;border:0">
-        <div style="font-family:Menlo,monospace;font-size:18px;font-weight:700;letter-spacing:2px;margin-top:14px">${ticket.ticket_id}</div>
-        <a href="${ticketUrl}" style="display:inline-block;margin-top:20px;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-size:14px;font-weight:600">View ticket online</a>
+      <tr><td style="padding:20px 0">
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border:2px solid ${PINK};border-radius:6px">
+          <tr><td style="padding:16px 18px;border-bottom:2px solid ${PINK}">
+            <div style="font-family:'Arial Black',Arial,sans-serif;font-size:20px;text-transform:uppercase;color:#ffffff">${escapeHtml(event.name)}</div>
+            <div style="margin-top:6px;font-size:14px;color:${PINK}">${escapeHtml(formatEventDay(event.startsAt))} · ${escapeHtml(doors)}</div>
+            <div style="margin-top:2px;font-size:14px;color:${PINK}">${escapeHtml(where)}</div>
+          </td></tr>
+          <tr><td align="center" style="padding:22px 18px">
+            <table cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;border-radius:6px"><tr><td style="padding:10px">
+              <img src="${qrSrc}" width="220" height="220" alt="Ticket QR code for ${escapeHtml(ticket.ticket_id)}" style="display:block;border:0">
+            </td></tr></table>
+            <div style="margin-top:14px;font-family:Menlo,monospace;font-size:20px;font-weight:700;letter-spacing:2px;color:#ffffff">${escapeHtml(ticket.ticket_id)}</div>
+            <div style="margin-top:2px;font-size:14px;color:${PINK}">${escapeHtml(ticket.name)}</div>
+          </td></tr>
+        </table>
       </td></tr>
+      <tr><td align="center" style="padding:4px 0 24px">
+        <a href="${ticketUrl}" style="display:inline-block;background:${GREEN};color:#000000;text-decoration:none;padding:14px 26px;border-radius:6px;font-family:'Arial Black',Arial,sans-serif;font-size:14px;text-transform:uppercase;letter-spacing:.5px">View ticket online</a>
+      </td></tr>
+      <tr><td style="border-top:2px solid ${PINK};padding:16px 0 0;font-size:12px;line-height:1.5;color:${PINK}">One ticket per person. Keep this email or screenshot the QR code.</td></tr>
     </table>
   </td></tr></table>
 </body></html>`;
@@ -41,7 +63,7 @@ export function renderTicketEmail(ticket: Ticket, ticketUrl: string, qrSrc: stri
  * Runs after the reservation has committed: a failed email never
  * un-books a ticket, it just leaves email_status = FAILED to retry later.
  */
-export async function sendTicketEmail(ticket: Ticket, ticketUrl: string) {
+export async function sendTicketEmail(ticket: Ticket, event: Event, ticketUrl: string) {
   if (!emailConfigured()) {
     console.log(`[email] SMTP not configured — skipped email to ${ticket.email} (${ticketUrl})`);
     await setEmailStatus(ticket.code, "SKIPPED");
@@ -56,11 +78,11 @@ export async function sendTicketEmail(ticket: Ticket, ticketUrl: string) {
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
     await transport.sendMail({
-      from: process.env.EMAIL_FROM ?? `${EVENT.name} <${process.env.SMTP_USER}>`,
+      from: process.env.EMAIL_FROM ?? `${event.name} <${process.env.SMTP_USER}>`,
       to: ticket.email,
-      subject: `Your ticket for ${EVENT.name} (${ticket.ticket_id})`,
-      text: `Hi ${ticket.name}, your free ticket is confirmed.\n\nTicket: ${ticket.ticket_id}\nView it here: ${ticketUrl}`,
-      html: renderTicketEmail(ticket, ticketUrl, "cid:ticket-qr"),
+      subject: `Your ticket for ${event.name} (${ticket.ticket_id})`,
+      text: `Hi ${ticket.name}, your free ticket is confirmed.\n\nTicket: ${ticket.ticket_id}\n${event.name}\n${formatEventDay(event.startsAt)}, doors ${formatTime(event.startsAt)}\nView it here: ${ticketUrl}`,
+      html: renderTicketEmail(ticket, event, ticketUrl, "cid:ticket-qr"),
       // Inline attachment: Gmail blocks data: URLs in images.
       attachments: [{ filename: "ticket.png", content: await ticketQr(ticketUrl), cid: "ticket-qr" }],
     });

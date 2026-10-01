@@ -1,0 +1,50 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import { adminEnabled, getAdmin, login } from "../../lib/admin-auth";
+
+if (getAdmin(Astro.cookies)) return Astro.redirect("/admin/scan");
+
+const enabled = adminEnabled();
+let error = "";
+let name = "";
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  name = String(form.get("name") ?? "");
+  if (!enabled) {
+    error = "Admin is off. Set ADMIN_PIN (6 or more characters) and restart.";
+  } else if (login(Astro.cookies, { pin: String(form.get("pin") ?? ""), name })) {
+    return Astro.redirect("/admin/scan", 303);
+  } else {
+    // Slow down PIN guessing.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    error = "Wrong PIN or missing name.";
+  }
+}
+---
+
+<AdminLayout title="Log in" admin={null}>
+  <section class="wrap hero">
+    <h1 class="title">Door login</h1>
+    <p class="lede">Enter the PIN you were given and your name. Your name is saved on every ticket you scan.</p>
+  </section>
+
+  <section class="wrap login">
+    <form method="post" novalidate>
+      {error && <p class="notice notice--error" role="alert">{error}</p>}
+
+      <div class:list={["field", error && "field--error"]}>
+        <label class="field__label" for="name">Your name</label>
+        <input class="field__input" id="name" name="name" required maxlength="40" autocomplete="name" value={name} />
+        <p class="field__help">Shown next to every ticket you scan.</p>
+      </div>
+
+      <div class:list={["field", error && "field--error"]}>
+        <label class="field__label" for="pin">PIN</label>
+        <input class="field__input" id="pin" name="pin" type="password" required autocomplete="current-password" inputmode="text" />
+      </div>
+
+      <button class="btn btn--primary btn--block" type="submit">Log in</button>
+    </form>
+  </section>
+</AdminLayout>

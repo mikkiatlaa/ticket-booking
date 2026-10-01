@@ -1,0 +1,31 @@
+---
+import PosterCard from "../../components/PosterCard.astro";
+import Base from "../../layouts/Base.astro";
+import { listEvents } from "../../lib/event";
+
+const events = await listEvents({ liveOnly: true });
+---
+
+<Base title="All events" description="Every upcoming show, party and session on the platform. All free." current="events">
+  <section class="wrap hero">
+    <p class="eyebrow"><a href="/">← Home</a></p>
+    <h1 class="display">All events</h1>
+    <p class="lede">Every show, party and session from independent organizers in Copenhagen.</p>
+  </section>
+
+  <section class="wrap section" aria-labelledby="results">
+    <div class="section__head">
+      <h2 id="results" class="title">Results</h2>
+      <span class="eyebrow green">{events.length} {events.length === 1 ? "event" : "events"}</span>
+    </div>
+    {
+      events.length > 0 ? (
+        <div class="grid">
+          {events.map((event) => <PosterCard event={event} />)}
+        </div>
+      ) : (
+        <p class="muted">No upcoming events right now.</p>
+      )
+    }
+  </section>
+</Base>

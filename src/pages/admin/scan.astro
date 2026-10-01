@@ -1,0 +1,224 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import { getAdmin } from "../../lib/admin-auth";
+import { listGuests } from "../../lib/checkin";
+import { formatEventDay, listEvents } from "../../lib/event";
+
+const admin = getAdmin(Astro.cookies);
+if (!admin) return Astro.redirect("/admin/login");
+
+// Every event, including drafts and past ones: staff pick the door they are working.
+const events = await listEvents({ liveOnly: false, includePast: true });
+const wanted = Astro.url.searchParams.get("event");
+const stillOn = (e: (typeof events)[number]) => new Date(e.endsAt ?? e.startsAt).getTime() + 6 * 3600_000 > Date.now();
+const event = events.find((e) => e.slug === wanted) ?? events.find(stillOn) ?? events.at(-1);
+const counts = event ? (await listGuests(event.id)).counts : null;
+---
+
+<AdminLayout title="Scan" admin={admin} current="scan">
+  {
+    !event || !counts ? (
+      <section class="wrap hero">
+        <h1 class="title">No events</h1>
+        <p class="lede">Create an event first. Then you can scan guests in.</p>
+      </section>
+    ) : (
+      <div class="scan" data-scan data-event={event.id} data-slug={event.slug} data-name={event.name}>
+        <section class="wrap scan__head">
+          <form class="scan__pick" method="get">
+            <label class="field__label" for="event">Event at this door</label>
+            <select class="field__input" id="event" name="event" data-pick>
+              {events.map((e) => (
+                <option value={e.slug} selected={e.id === event.id}>
+                  {e.name} · {formatEventDay(e.startsAt)}
+                </option>
+              ))}
+            </select>
+            <noscript><button class="btn btn--secondary" type="submit">Switch</button></noscript>
+          </form>
+          <p class="scan__count">
+            Inside now <strong data-inside>{counts.inside}</strong> / {event.capacity}
+          </p>
+        </section>
+
+        <section class="wrap scan__body">
+          <div class="scan__video">
+            <video playsinline muted data-video aria-label="Camera view for scanning ticket QR codes"></video>
+          </div>
+          <p class="scan__hint" data-hint>Point the camera at a ticket QR code.</p>
+          <p class="notice notice--error" data-camera-error hidden role="alert"></p>
+
+          <form class="scan__manual" data-manual novalidate>
+            <div class="field">
+              <label class="field__label" for="code">Or type the ticket code</label>
+              <div class="scan__manual-row">
+                <input class="field__input" id="code" name="code" placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+                <button class="btn btn--primary" type="submit">Check in</button>
+              </div>
+            </div>
+          </form>
+          <p><a class="btn btn--secondary" href={`/admin/guests?event=${event.slug}`}>Search by name</a></p>
+        </section>
+
+        <section class="gate" data-gate data-state="in" hidden role="alertdialog" aria-modal="true" aria-labelledby="gate-word">
+          <p class="gate__top"><span class="tag">Admin mode</span> <span data-gate-event>{event.name}</span></p>
+          <h2 class="gate__word" id="gate-word" data-gate-word>In</h2>
+          <div class="gate__info">
+            <p class="gate__name" data-gate-name></p>
+            <p class="gate__meta" data-gate-meta></p>
+            <p class="gate__note" data-gate-note></p>
+            <p class="gate__count" data-gate-count-row>
+              Inside now <strong data-gate-count></strong>
+            </p>
+            <div class="gate__actions">
+              <button class="btn gate__next" type="button" data-next>Scan next</button>
+              <button class="btn gate__alt" type="button" data-undo hidden>Undo</button>
+              <a class="btn gate__alt" data-search href={`/admin/guests?event=${event.slug}`} hidden>Search by name</a>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  <script>
+    import QrScanner from "qr-scanner";
+
+    type Guest = { code: string; ticket_id: string; name: string; checked_in_at: string | null; checked_in_by: string | null };
+    type Counted = { guest: Guest; inside: number; capacity: number };
+    type Result =
+      | ({ result: "OK" } & Counted)
+      | ({ result: "ALREADY_IN" } & Counted)
+      | { result: "INVALID"; reason: string };
+
+    const pick = document.querySelector<HTMLSelectElement>("[data-pick]");
+    pick?.addEventListener("change", () => pick.form?.submit());
+
+    const root = document.querySelector<HTMLElement>("[data-scan]");
+    if (root) {
+      const eventId = root.dataset.event!;
+      const gate = root.querySelector<HTMLElement>("[data-gate]")!;
+      const video = root.querySelector<HTMLVideoElement>("[data-video]")!;
+      const hint = root.querySelector<HTMLElement>("[data-hint]")!;
+      const cameraError = root.querySelector<HTMLElement>("[data-camera-error]")!;
+      const insideEl = root.querySelector<HTMLElement>("[data-inside]")!;
+      const g = <T extends HTMLElement>(selector: string) => gate.querySelector<T>(selector)!;
+      const next = g<HTMLButtonElement>("[data-next]");
+      const undo = g<HTMLButtonElement>("[data-undo]");
+      const search = g<HTMLAnchorElement>("[data-search]");
+
+      let busy = false;
+      let last = { text: "", at: 0 };
+      let shownCode: string | null = null;
+      let scanner: QrScanner | undefined;
+
+      const clock = (iso: string) =>
+        new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Copenhagen" });
+
+      function show(result: Result) {
+        shownCode = null;
+        undo.hidden = true;
+        search.hidden = true;
+        g("[data-gate-name]").textContent = "";
+        g("[data-gate-meta]").textContent = "";
+        g("[data-gate-note]").textContent = "";
+        g("[data-gate-count-row]").hidden = result.result === "INVALID";
+
+        if (result.result === "OK") {
+          gate.dataset.state = "in";
+          g("[data-gate-word]").textContent = "In";
+          g("[data-gate-name]").textContent = result.guest.name;
+          g("[data-gate-meta]").textContent = result.guest.ticket_id;
+          shownCode = result.guest.code;
+          undo.hidden = false;
+        } else if (result.result === "ALREADY_IN") {
+          gate.dataset.state = "used";
+          g("[data-gate-word]").textContent = "Already used";
+          g("[data-gate-name]").textContent = result.guest.name;
+          const at = result.guest.checked_in_at ? clock(result.guest.checked_in_at) : "";
+          g("[data-gate-meta]").textContent = `${result.guest.ticket_id} · scanned ${at} by ${result.guest.checked_in_by ?? "someone"}`;
+          g("[data-gate-note]").textContent = "Ask for ID. Check the name.";
+          search.hidden = false;
+        } else {
+          gate.dataset.state = "invalid";
+          g("[data-gate-word]").textContent = "Not valid";
+          g("[data-gate-note]").textContent = result.reason;
+          search.hidden = false;
+        }
+
+        if (result.result !== "INVALID") {
+          g("[data-gate-count]").textContent = `${result.inside} / ${result.capacity}`;
+          insideEl.textContent = String(result.inside);
+        }
+        navigator.vibrate?.(result.result === "OK" ? 150 : [80, 60, 80]);
+        scanner?.pause();
+        gate.hidden = false;
+        next.focus();
+      }
+
+      async function submit(text: string) {
+        const now = Date.now();
+        // The same QR stays in view for a few seconds: only send it once.
+        if (busy || !gate.hidden || (text === last.text && now - last.at < 4000)) return;
+        busy = true;
+        last = { text, at: now };
+        try {
+          const res = await fetch("/api/admin/checkin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: text, event: eventId }),
+          });
+          if (res.status === 401) {
+            location.href = "/admin/login";
+            return;
+          }
+          show((await res.json()) as Result);
+        } catch {
+          show({ result: "INVALID", reason: "No connection. Try again." });
+        } finally {
+          busy = false;
+        }
+      }
+
+      function hide() {
+        gate.hidden = true;
+        last.at = Date.now(); // ignore the code still in front of the camera for a moment
+        hint.textContent = "Point the camera at a ticket QR code.";
+        scanner?.start().catch(() => {});
+      }
+
+      next.addEventListener("click", hide);
+      undo.addEventListener("click", async () => {
+        if (!shownCode) return;
+        await fetch("/api/admin/undo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: shownCode }),
+        });
+        insideEl.textContent = String(Math.max(0, Number(insideEl.textContent) - 1));
+        last = { text: "", at: 0 };
+        hide();
+      });
+
+      root.querySelector<HTMLFormElement>("[data-manual]")!.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const input = (e.currentTarget as HTMLFormElement).elements.namedItem("code") as HTMLInputElement;
+        last = { text: "", at: 0 };
+        if (input.value.trim()) void submit(input.value);
+        input.value = "";
+      });
+
+      scanner = new QrScanner(video, (r) => void submit(r.data), {
+        returnDetailedScanResult: true,
+        preferredCamera: "environment",
+        highlightScanRegion: true,
+        maxScansPerSecond: 5,
+      });
+      scanner.start().catch((err) => {
+        hint.hidden = true;
+        cameraError.hidden = false;
+        cameraError.textContent = `Camera unavailable (${String(err)}). Phones need a secure (https) address for the camera. You can still type the code below.`;
+      });
+    }
+  </script>
+</AdminLayout>

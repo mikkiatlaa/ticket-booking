@@ -1,0 +1,194 @@
+---
+import { randomUUID } from "node:crypto";
+import LiveCount from "../../components/LiveCount.astro";
+import Base from "../../layouts/Base.astro";
+import { getStats, reserveTicket, type ReserveField } from "../../lib/booking";
+import { sendTicketEmail } from "../../lib/email";
+import { dateParts, formatEventDay, formatTime, getLiveEventBySlug, whenWord } from "../../lib/event";
+import { getBaseUrl } from "../../lib/url";
+
+const event = await getLiveEventBySlug(Astro.params.slug ?? "");
+if (!event) return Astro.rewrite("/404");
+
+// ---- RSVP form (plain HTML form posted to this same page) ----
+const values = { name: "", email: "", phone: "" };
+const errors: Partial<Record<ReserveField | "form", string>> = {};
+let idempotencyKey: string = randomUUID();
+let soldOutNow = false;
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  values.name = String(form.get("name") ?? "");
+  values.email = String(form.get("email") ?? "");
+  values.phone = String(form.get("phone") ?? "");
+  idempotencyKey = String(form.get("idempotencyKey") ?? "") || idempotencyKey;
+
+  if (form.get("website")) {
+    // Honeypot: people never see this field, simple bots fill it in.
+    errors.form = "Something went wrong. Try again.";
+  } else {
+    const result = await reserveTicket({ eventId: event.id, ...values, idempotencyKey });
+    if (result.ok) {
+      if (!result.replayed) {
+        await sendTicketEmail(result.ticket, event, `${getBaseUrl(Astro.request)}/ticket/${result.ticket.code}`);
+      }
+      return Astro.redirect(`/ticket/${result.ticket.code}`, 303);
+    }
+    if (result.reason === "SOLD_OUT") soldOutNow = true;
+    else errors[result.field ?? "form"] = result.message;
+  }
+}
+
+const stats = await getStats(event.id);
+const soldOut = soldOutNow || stats.remaining <= 0;
+// Doors time is the start; stay open until six hours after if no end time is set.
+const endsAt = new Date(event.endsAt ?? new Date(event.startsAt).getTime() + 6 * 3600_000);
+const ended = endsAt.getTime() < Date.now();
+
+const { day, month, short } = dateParts(event.startsAt);
+const where = [event.venue, event.area].filter(Boolean).join(", ");
+const word = whenWord(event.startsAt);
+const base = getBaseUrl(Astro.request);
+
+// What search engines read: a proper Event with price 0.
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Event",
+  name: event.name,
+  startDate: event.startsAt,
+  ...(event.endsAt && { endDate: event.endsAt }),
+  eventStatus: "https://schema.org/EventScheduled",
+  eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+  location: { "@type": "Place", name: event.venue, address: { "@type": "PostalAddress", addressLocality: event.area ?? "Copenhagen", addressCountry: "DK" } },
+  ...(event.organizer && { organizer: { "@type": "Organization", name: event.organizer } }),
+  ...(event.lineup.length > 0 && { performer: event.lineup.map((name) => ({ "@type": "PerformingGroup", name })) }),
+  isAccessibleForFree: true,
+  offers: {
+    "@type": "Offer",
+    url: `${base}/events/${event.slug}`,
+    price: 0,
+    priceCurrency: "DKK",
+    availability: soldOut ? "https://schema.org/SoldOut" : "https://schema.org/InStock",
+  },
+};
+const jsonLdHtml = JSON.stringify(jsonLd).replace(/</g, "\\u003c");
+const description = event.tagline ?? `${event.name} in ${where}. Free tickets.`;
+---
+
+<Base title={`${event.name} · Free tickets`} description={description} current="events">
+  <script is:inline slot="head" type="application/ld+json" set:html={jsonLdHtml} />
+
+  <section class="wrap">
+    <p class="eyebrow backlink"><a href="/events">← All events</a></p>
+  </section>
+
+  <section class="wrap event-hero" aria-labelledby="event-title">
+    <div class="event-hero__tags poster__tags">
+      {event.genre && <span class="tag">{event.genre}</span>}
+      <span class="tag tag--green">Free</span>
+      <span class="tag tag--pink">{short}</span>
+    </div>
+    <h1 id="event-title" class="display">{event.name}</h1>
+    <p class="event-hero__where">{where}</p>
+    {!ended && <a class="btn btn--primary" href="#tickets">Get my free ticket</a>}
+  </section>
+
+  <div class="wrap event-layout">
+    <div class="event-main">
+      <section aria-labelledby="about-heading">
+        <h2 id="about-heading" class="title">About</h2>
+        <p class="lede white">{description}</p>
+        <dl class="facts panel">
+          <div><dt>Date</dt><dd>{formatEventDay(event.startsAt)}</dd></div>
+          <div><dt>Doors</dt><dd>{formatTime(event.startsAt)}{event.endsAt && ` · Ends ${formatTime(event.endsAt)}`}</dd></div>
+          <div><dt>Venue</dt><dd>{where}</dd></div>
+          <div><dt>Entry</dt><dd>Free. One ticket per person, with name, email and phone.</dd></div>
+        </dl>
+      </section>
+
+      {
+        event.lineup.length > 0 && (
+          <section aria-labelledby="lineup-heading">
+            <div class="section__head">
+              <h2 id="lineup-heading" class="title">Lineup</h2>
+              <span class="eyebrow green">{event.lineup.length} {event.lineup.length === 1 ? "artist" : "artists"}</span>
+            </div>
+            <ul class="lineup">
+              {event.lineup.map((name) => <li>{name}</li>)}
+            </ul>
+          </section>
+        )
+      }
+    </div>
+
+    <aside class="event-side" id="tickets" aria-labelledby="tickets-heading">
+      <div class="panel panel--raised">
+        <h2 id="tickets-heading" class="title">Tickets</h2>
+        <p class="eyebrow">{word === "TONIGHT" || word === "THIS WEEKEND" ? word : `${day} ${month}`} · Free · RSVP</p>
+        <div class="event-side__count"><LiveCount slug={event.slug} initial={stats} /></div>
+
+        {
+          ended ? (
+            <p class="notice">This event has ended.</p>
+          ) : soldOut ? (
+            <div class="notice">
+              <p class="white"><strong>Sold out</strong></p>
+              <p>Every ticket has been claimed.</p>
+            </div>
+          ) : (
+            <form method="post" novalidate>
+              <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+              <div class="trap" aria-hidden="true">
+                <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+              </div>
+
+              {errors.form && <p class="notice notice--error" role="alert">{errors.form}</p>}
+
+              <div class:list={["field", errors.name && "field--error"]}>
+                <label class="field__label" for="name">Full name</label>
+                <input class="field__input" id="name" name="name" required maxlength="80" autocomplete="name" placeholder="First and last name" value={values.name} aria-invalid={errors.name ? "true" : undefined} aria-describedby={errors.name ? "name-error" : "name-help"} />
+                {errors.name ? <p class="field__error" id="name-error">{errors.name}</p> : <p class="field__help" id="name-help">The name on your ticket.</p>}
+              </div>
+
+              <div class:list={["field", errors.email && "field--error"]}>
+                <label class="field__label" for="email">Email</label>
+                <input class="field__input" id="email" name="email" type="email" required maxlength="200" autocomplete="email" inputmode="email" placeholder="you@email.com" value={values.email} aria-invalid={errors.email ? "true" : undefined} aria-describedby={errors.email ? "email-error" : "email-help"} />
+                {errors.email ? <p class="field__error" id="email-error">{errors.email}</p> : <p class="field__help" id="email-help">Your ticket is sent here. One ticket per email.</p>}
+              </div>
+
+              <div class:list={["field", errors.phone && "field--error"]}>
+                <label class="field__label" for="phone">Phone</label>
+                <div class="phone">
+                  <span class="phone__prefix" aria-hidden="true">+45</span>
+                  <input class="field__input" id="phone" name="phone" type="tel" required maxlength="20" autocomplete="tel-national" inputmode="tel" placeholder="42 12 34 56" value={values.phone} aria-invalid={errors.phone ? "true" : undefined} aria-describedby={errors.phone ? "phone-error" : "phone-help"} />
+                </div>
+                {errors.phone ? <p class="field__error" id="phone-error">{errors.phone}</p> : <p class="field__help" id="phone-help">Danish number. For ticket questions on the night.</p>}
+              </div>
+
+              <button class="btn btn--primary btn--block" type="submit" data-submit>Get my free ticket</button>
+            </form>
+          )
+        }
+      </div>
+    </aside>
+  </div>
+
+  {
+    Astro.request.method === "POST" && (
+      <script is:inline>document.getElementById("tickets")?.scrollIntoView();</script>
+    )
+  }
+
+  <script>
+    // One tap, one ticket: lock the button while the booking is going through.
+    document.querySelectorAll<HTMLFormElement>("form[method=post]").forEach((form) => {
+      form.addEventListener("submit", () => {
+        const button = form.querySelector<HTMLButtonElement>("[data-submit]");
+        if (!button) return;
+        button.setAttribute("aria-disabled", "true");
+        button.textContent = "Reserving your spot…";
+        button.style.pointerEvents = "none";
+      });
+    });
+  </script>
+</Base>

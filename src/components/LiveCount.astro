@@ -1,0 +1,60 @@
+---
+import type { Stats } from "../lib/booking";
+
+interface Props {
+  slug: string;
+  initial: Stats;
+  /** "lg" is the projector size. */
+  size?: "sm" | "lg";
+}
+
+const { slug, initial, size = "sm" } = Astro.props;
+const pct = initial.capacity ? Math.min(100, (initial.reserved / initial.capacity) * 100) : 100;
+---
+
+<div class={`live live--${size}`} data-live-count data-slug={slug} data-size={size}>
+  <div class="live__row">
+    <span class="live__main" data-main>
+      {size === "lg" ? initial.reserved : `${initial.remaining} of ${initial.capacity} left`}
+      {size === "lg" && <span class="live__cap"> / {initial.capacity}</span>}
+    </span>
+    {size === "lg" && <span class="live__side" data-side>{initial.remaining > 0 ? `${initial.remaining} left` : "Sold out"}</span>}
+  </div>
+  <div class="live__bar" role="progressbar" aria-valuemin="0" aria-valuemax={initial.capacity} aria-valuenow={initial.reserved} aria-label="Tickets reserved">
+    <div class="live__fill" data-fill style={`width:${pct}%`}></div>
+  </div>
+</div>
+
+<script>
+  // Keeps the counter moving while people book. If the connection drops for a
+  // moment it simply keeps the last numbers it had.
+  type Stats = { capacity: number; reserved: number; remaining: number };
+
+  function render(el: HTMLElement, s: Stats) {
+    const big = el.dataset.size === "lg";
+    const main = el.querySelector<HTMLElement>("[data-main]");
+    const side = el.querySelector<HTMLElement>("[data-side]");
+    const fill = el.querySelector<HTMLElement>("[data-fill]");
+    const bar = el.querySelector<HTMLElement>("[role=progressbar]");
+    if (main) main.innerHTML = big ? `${s.reserved}<span class="live__cap"> / ${s.capacity}</span>` : `${s.remaining} of ${s.capacity} left`;
+    if (side) side.textContent = s.remaining > 0 ? `${s.remaining} left` : "Sold out";
+    if (fill) fill.style.width = `${s.capacity ? Math.min(100, (s.reserved / s.capacity) * 100) : 100}%`;
+    bar?.setAttribute("aria-valuenow", String(s.reserved));
+    bar?.setAttribute("aria-valuemax", String(s.capacity));
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-live-count]").forEach((el) => {
+    const slug = el.dataset.slug;
+    if (!slug) return;
+    const tick = async () => {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`/api/stats?event=${encodeURIComponent(slug)}`, { cache: "no-store" });
+        if (res.ok) render(el, await res.json());
+      } catch {
+        // Offline for a moment: keep the last numbers.
+      }
+    };
+    setInterval(tick, 3000);
+  });
+</script>

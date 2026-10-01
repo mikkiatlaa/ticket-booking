@@ -1,9 +1,19 @@
-<!-- BEGIN:nextjs-agent-rules -->
+# Ticket booking (Astro)
 
-# This is NOT the Next.js you know
+Free event tickets: pick an event, RSVP with name, email and a Danish phone number, get a QR ticket by email,
+door staff scan guests in. Astro (server output) on Vercel, Postgres on Neon.
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+## Read before writing Astro code
+Astro 7 is newer than most training data. Check https://docs.astro.build before using an API from memory.
 
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+## Rules
+- Entry points (pages, endpoints) stay thin. Business rules live in `src/lib`. Only `src/lib/db.ts` talks to the database.
+- Every statement in `SCHEMA` (db.ts) must be safe to run again: it runs on every server start. Add migrations there.
+- Slow work (sending email) happens after the database transaction commits, never inside it.
+- Money does not exist yet. Tickets are free. Paid tickets (MobilePay) are a later phase.
+- Never put secrets in the repo. Environment variables are set in Vercel by the owner.
 
-<!-- END:nextjs-agent-rules -->
+## Design
+Brand tokens and components: `src/styles/global.css`. Source of truth: the screenshots and docs in
+`../ticket-platform/docs/DESIGN-SYSTEM.md`. Pure black background, pink text, green actions, blue selected state.
+Copy voice: short, plain, no exclamation marks. Admin pages must always show the ADMIN MODE bar.

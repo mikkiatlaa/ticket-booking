@@ -1,0 +1,75 @@
+---
+import QRCode from "qrcode";
+import Base from "../../layouts/Base.astro";
+import { getTicket } from "../../lib/booking";
+import { sendTicketEmail } from "../../lib/email";
+import { dateParts, formatEventDay, formatTime, getEventById } from "../../lib/event";
+import { formatPhone } from "../../lib/phone";
+import { getBaseUrl } from "../../lib/url";
+
+let ticket = await getTicket(Astro.params.code ?? "");
+if (!ticket) return Astro.rewrite("/404");
+const event = await getEventById(ticket.event_id);
+if (!event) return Astro.rewrite("/404");
+
+const ticketUrl = `${getBaseUrl(Astro.request)}/ticket/${ticket.code}`;
+
+// "Send it again" on a failed email. Only failed emails can be retried:
+// this page is not an open mail relay.
+if (Astro.request.method === "POST" && ticket.email_status === "FAILED") {
+  await sendTicketEmail(ticket, event, ticketUrl);
+  return Astro.redirect(`/ticket/${ticket.code}`, 303);
+}
+
+const qrSvg = await QRCode.toString(ticketUrl, { type: "svg", margin: 1, color: { dark: "#000000", light: "#ffffff" } });
+const { short } = dateParts(event.startsAt);
+const where = [event.venue, event.area].filter(Boolean).join(", ");
+const heading = { CONFIRMED: "Locked in.", CHECKED_IN: "You're in.", CANCELLED: "Cancelled." }[ticket.status];
+---
+
+<Base title={`Ticket ${ticket.ticket_id} · ${event.name}`} noindex>
+  <section class="wrap ticket-page">
+    <h1 class={ticket.status === "CANCELLED" ? "display" : "display green"}>{heading}</h1>
+    <p class="eyebrow">
+      {ticket.status === "CHECKED_IN" ? "Checked in at the door" : `See you at ${event.venue}`}
+    </p>
+
+    {
+      ticket.email_status === "SENT" && (
+        <p class="notice">Confirmation sent to <span class="white">{ticket.email}</span>. Check spam if you do not see it.</p>
+      )
+    }
+    {
+      ticket.email_status === "FAILED" && (
+        <form class="notice notice--error" method="post">
+          Your ticket is booked, but the email did not go through. <button class="linkbtn" type="submit">Send it again</button>
+        </form>
+      )
+    }
+    {
+      ticket.email_status === "SKIPPED" && (
+        <p class="notice">Email sending is not set up yet. <a class="white" href={`/ticket/${ticket.code}/email`}>Preview the email</a></p>
+      )
+    }
+
+    <article class="ticket" aria-label={`Ticket ${ticket.ticket_id}`}>
+      <header class="ticket__head">
+        <span class="ticket__event">{event.name}</span>
+        <span class="tag tag--pink">{short}</span>
+      </header>
+      <div class="ticket__qr">
+        <div class="ticket__qr-img" set:html={qrSvg} role="img" aria-label={`QR code for ticket ${ticket.ticket_id}`} />
+      </div>
+      <div class="ticket__body">
+        <p class="ticket__name">{ticket.name}</p>
+        <p class="ticket__id">{ticket.ticket_id}</p>
+        <p class="ticket__line">{formatEventDay(event.startsAt)} · Doors {formatTime(event.startsAt)}</p>
+        <p class="ticket__line">{where}</p>
+        {ticket.phone && <p class="ticket__line">{formatPhone(ticket.phone)}</p>}
+      </div>
+    </article>
+
+    <p class="muted ticket-page__hint">Screenshot this or keep the email. Show the QR code at the door.</p>
+    <p><a class="btn btn--secondary" href={`/events/${event.slug}`}>Back to event</a></p>
+  </section>
+</Base>

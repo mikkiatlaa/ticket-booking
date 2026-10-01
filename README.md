@@ -1,59 +1,57 @@
-# Free Ticket Booking — MVP
+# Ticket booking
 
-Scan a QR code → reserve a free general-admission ticket → get an email with your ticket QR.
+Free event tickets. Pick an event, RSVP with name, email and a Danish phone number, get a QR ticket by email.
+Door staff scan guests in with a phone. Built with Astro (server rendering) on Vercel, with Postgres on Neon.
 
-## Run the class demo
+## Run it locally
 
 ```bash
 npm install
-npm run reset     # wipe test bookings (local database only)
-npm run demo      # build + start on your Wi-Fi network
+npm run dev          # http://localhost:4321
 ```
 
-1. Open `http://<your-laptop-ip>:3000/present` on the projector (find the IP with `ipconfig getifaddr en0`).
-   **Open it via the IP, not `localhost`**, so the QR code points somewhere phones can reach.
-2. Classmates scan the QR, fill in name + email, and get their ticket.
-3. The counter on the projector updates live as tickets are claimed.
-
-Phones must be on the **same Wi-Fi** as the laptop. Some school networks block device-to-device
-traffic — if phones can't load the page, use your phone's hotspot or deploy it (see below).
+With no `DATABASE_URL` it uses a small embedded database in `./.pglite`, so nothing else is needed.
+`npm run reset` wipes it. To try the door pages, copy `.env.example` to `.env` and set `ADMIN_PIN`
+(6 or more characters), then open `/admin/login`.
 
 ## Pages
 
 | URL | What |
 |---|---|
-| `/` | Event page + reservation form |
-| `/present` | Projector view: big QR code + live counter |
-| `/ticket/<code>` | The attendee's ticket |
+| `/` | Home: next event and what's on |
+| `/events` | All upcoming events |
+| `/events/<slug>` | One event: details, lineup and the RSVP form |
+| `/ticket/<code>` | The guest's ticket with its QR code |
 | `/ticket/<code>/email` | Browser preview of the confirmation email |
-| `/api/stats` | `{ capacity, reserved, remaining }` |
+| `/admin/login` | Door staff log in with the shared PIN and their name |
+| `/admin/scan` | Camera scanner: full-screen IN, ALREADY USED or NOT VALID |
+| `/admin/guests` | Who is inside, who has not arrived, search and manual check-in |
+| `/api/stats?event=<slug>` | `{ capacity, reserved, remaining }` |
 
-Edit the event (name, date, venue, capacity) in `src/lib/event.ts`.
+Admin pages always show a blue **ADMIN MODE** bar and a blue frame, and the bar also appears on the public
+site while you are logged in.
 
-## Email
+## Events
 
-Without setup, bookings work and the ticket page links to an email preview ("demo mode").
-To send real emails, copy `.env.example` to `.env.local` and set `SMTP_USER` / `SMTP_PASS`
-using a Gmail **App Password**. Gmail allows ~500 emails/day, plenty for a class.
+Events live in the database. The starting events are in `src/lib/seed-events.ts`: edit them there and
+restart. Each event's `slug` is its own web address and must be unique.
 
-## How it avoids overselling
+## Rules the code enforces
 
-The logic follows the seat-hold / concurrency guide this project is based on, simplified for
-free general-admission tickets (no seat map, no payment, so no hold timer is needed):
+- **Never oversold.** One conditional update claims a seat: `reserved < capacity`. The database also
+  refuses `reserved > capacity` as a last line of defence.
+- **One ticket per email per event.** A repeat sign-up is refused and gives the seat back.
+- **Phone is required, Danish only.** Eight digits starting 2-9, with or without +45. Stored as `+45XXXXXXXX`.
+- **Double clicks are safe.** Each form load has a key; the same key returns the same ticket.
+- **A ticket only opens its own event's door.** Another event's QR code shows NOT VALID.
+- **Email is sent after the booking is saved.** A failed email never cancels a ticket; it can be re-sent
+  from the ticket page.
 
-- **One conditional update claims a spot:** `UPDATE events SET reserved = reserved + 1 WHERE reserved < capacity`.
-  Postgres locks the row, so simultaneous requests queue and each re-checks the condition.
-- **The database is the final guard:** `CHECK (reserved <= capacity)` and a unique index on
-  `(event, lower(email))` refuse invalid data even if the app code had a bug.
-- **Idempotency:** every form load gets a key. Double-clicks and retries return the same ticket.
-- **Short transaction, side effects after commit:** the email is sent after the booking is saved.
-  A failed email never cancels a ticket; it's marked `FAILED` and can be re-sent from the ticket page.
+Prove it: `npm run stress` fires 200 simultaneous requests at a 50-seat event on a throwaway database and
+checks all of the rules above.
 
-Prove it: `npm run stress` fires 204 simultaneous requests at a 50-ticket event on a throwaway database
-and checks the invariants.
+## Deploy (Vercel + Neon)
 
-## Deploying online (optional)
-
-Deploy to Vercel, add a Postgres database (Neon via the Vercel Marketplace), and set
-`DATABASE_URL`, `PUBLIC_URL`, `SMTP_USER`, `SMTP_PASS` in the project's environment variables.
-The local database (`.pglite`) does not work on Vercel.
+Environment variables (Vercel, Settings, Environment Variables): `DATABASE_URL` (from Neon), `PUBLIC_URL`,
+`SMTP_USER`, `SMTP_PASS` (a Gmail App Password), `ADMIN_PIN`. Pushing to `main` deploys.
+The project's framework preset must be **Astro**.

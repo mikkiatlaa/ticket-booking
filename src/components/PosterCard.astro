@@ -1,0 +1,34 @@
+---
+import { dateParts, formatTime, whenWord, type Event } from "../lib/event";
+
+interface Props {
+  event: Event;
+  /** Colour field: 0 blue, 1 pink, 2 green, 3 black with a pink glow. */
+  variant?: number;
+}
+
+const { event } = Astro.props;
+// Same event, same colours every time.
+const variant = Astro.props.variant ?? [...event.id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 4;
+
+const when = whenWord(event.startsAt);
+const { day, month, short } = dateParts(event.startsAt);
+// Soonest events say TONIGHT or THIS WEEKEND, further out show the date itself.
+const word = when === "TONIGHT" || when === "THIS WEEKEND" ? when : `${day} ${month}`;
+const where = [event.venue, event.area].filter(Boolean).join(" · ");
+---
+
+<a class={`poster poster--${variant}`} href={`/events/${event.slug}`}>
+  <div class="poster__art">
+    <div class="poster__tags">
+      {event.genre && <span class="tag">{event.genre}</span>}
+      <span class="tag tag--green">Free</span>
+    </div>
+    <p class="poster__word">{word}</p>
+  </div>
+  <div class="poster__meta">
+    <p class="poster__name">{event.name}</p>
+    {event.organizer && <p class="poster__line">{event.organizer}</p>}
+    <p class="poster__line">{short} · Doors {formatTime(event.startsAt)} · {where}</p>
+  </div>
+</a>

@@ -1,0 +1,36 @@
+---
+interface Props {
+  /** The logged-in admin's name, or null on the login page. */
+  admin: string | null;
+  /** "admin" = inside the admin area (Scan, Guests). "public" = admin viewing the public site. */
+  where?: "admin" | "public";
+  current?: "scan" | "guests";
+}
+
+const { admin, where = "admin", current } = Astro.props;
+---
+
+<div class="admin-bar" role="region" aria-label="Admin mode">
+  <span class="admin-bar__badge">Admin mode</span>
+  {admin && <span class="admin-bar__who">{admin}</span>}
+  <nav class="admin-bar__nav" aria-label="Admin">
+    {
+      where === "admin" && admin ? (
+        <>
+          <a href="/admin/scan" aria-current={current === "scan" ? "page" : undefined}>Scan</a>
+          <a href="/admin/guests" aria-current={current === "guests" ? "page" : undefined}>Guests</a>
+          <a href="/">View site</a>
+        </>
+      ) : admin ? (
+        <a href="/admin/scan">Open admin</a>
+      ) : null
+    }
+  </nav>
+  {
+    admin && (
+      <form class="admin-bar__out" method="post" action="/admin/logout">
+        <button type="submit">Log out</button>
+      </form>
+    )
+  }
+</div>

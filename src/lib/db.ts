@@ -1,5 +1,5 @@
 import type { Sql, TransactionSql } from "postgres";
-import { EVENT } from "./event";
+import { SEED_EVENTS } from "./seed-events";
 
 // A tiny database interface so the same SQL runs on two drivers:
 //  - DATABASE_URL set   -> real Postgres (e.g. Neon) via postgres.js
@@ -41,10 +41,50 @@ CREATE TABLE IF NOT EXISTS tickets (
   // One active ticket per email address per event.
   `CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_email
      ON tickets (event_id, lower(email)) WHERE status <> 'CANCELLED'`,
-  // Human-readable ID (DD-001), computed by Postgres from ticket_number.
-  // Public-facing only: the random "code" stays the secret in links and QR codes.
-  `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_id TEXT
-     GENERATED ALWAYS AS ('${EVENT.ticketPrefix}-' || lpad(ticket_number::text, 3, '0')) STORED`,
+  // Several events: each has its own web address (slug), unique per event,
+  // and its own ticket prefix (DD-001, UB-001, ...).
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS slug TEXT
+     CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$')`,
+  `UPDATE events SET slug = id WHERE slug IS NULL`,
+  `ALTER TABLE events ALTER COLUMN slug SET NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS events_slug_key ON events (slug)`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_prefix TEXT NOT NULL DEFAULT 'TK'`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS tagline TEXT`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS area TEXT`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ`,
+  // Only live events show up in public lists and can be booked.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'live'
+     CHECK (status IN ('draft', 'live'))`,
+  // What the public event cards and pages show. `organizer` is plain text until
+  // organizer accounts exist.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer TEXT`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS genre TEXT`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS lineup TEXT[] NOT NULL DEFAULT '{}'`,
+  // Human-readable ID (DD-001): public-facing only, the random "code" stays the
+  // secret in links and QR codes. It used to be computed by Postgres with one
+  // fixed prefix; now the app writes it, so drop that formula but keep old values.
+  `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ticket_id TEXT`,
+  `DO $$ BEGIN
+     IF EXISTS (
+       SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'tickets'::regclass AND attname = 'ticket_id' AND attgenerated <> ''
+     ) THEN
+       ALTER TABLE tickets ALTER COLUMN ticket_id DROP EXPRESSION;
+     END IF;
+   END $$`,
+  `ALTER TABLE tickets ALTER COLUMN ticket_id SET NOT NULL`,
+  // Every RSVP has a phone number: stored as +45XXXXXXXX (Danish numbers only).
+  // Tickets made before this rule (older than the cutoff) have none, so the
+  // database only demands one from newer tickets.
+  `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS phone TEXT`,
+  `DO $$ BEGIN
+     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tickets_phone_check') THEN
+       ALTER TABLE tickets ADD CONSTRAINT tickets_phone_check CHECK (
+         coalesce(phone ~ '^\\+45[2-9][0-9]{7}$', false)
+         OR created_at < '2026-10-02T00:00:00+02:00'
+       );
+     END IF;
+   END $$`,
   // Door check-in: who scanned the ticket, and when.
   `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ`,
   `ALTER TABLE tickets ADD COLUMN IF NOT EXISTS checked_in_by TEXT`,
@@ -103,16 +143,31 @@ async function createDb(): Promise<Db> {
 async function init(): Promise<Db> {
   const db = await createDb();
   for (const statement of SCHEMA) await db.query(statement);
-  await db.query(
-    `INSERT INTO events (id, name, venue, starts_at, capacity)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (id) DO UPDATE SET
-       name = EXCLUDED.name,
-       venue = EXCLUDED.venue,
-       starts_at = EXCLUDED.starts_at,
-       capacity = GREATEST(EXCLUDED.capacity, events.reserved)`,
-    [EVENT.id, EVENT.name, EVENT.venue, EVENT.startsAt, EVENT.capacity],
-  );
+  for (const e of SEED_EVENTS) {
+    await db.query(
+      `INSERT INTO events (id, slug, name, organizer, genre, tagline, venue, area, starts_at, ends_at,
+                           capacity, ticket_prefix, lineup)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+               ARRAY(SELECT jsonb_array_elements_text($13::jsonb)))
+       ON CONFLICT (id) DO UPDATE SET
+         slug = EXCLUDED.slug,
+         name = EXCLUDED.name,
+         organizer = EXCLUDED.organizer,
+         genre = EXCLUDED.genre,
+         tagline = EXCLUDED.tagline,
+         venue = EXCLUDED.venue,
+         area = EXCLUDED.area,
+         starts_at = EXCLUDED.starts_at,
+         ends_at = EXCLUDED.ends_at,
+         ticket_prefix = EXCLUDED.ticket_prefix,
+         lineup = EXCLUDED.lineup,
+         capacity = GREATEST(EXCLUDED.capacity, events.reserved)`,
+      [
+        e.id, e.slug, e.name, e.organizer, e.genre, e.tagline, e.venue, e.area, e.startsAt, e.endsAt,
+        e.capacity, e.ticketPrefix, JSON.stringify(e.lineup),
+      ],
+    );
+  }
   return db;
 }
 

@@ -1,0 +1,183 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import { getAdmin } from "../../lib/admin-auth";
+import { formatEventDay, listEvents } from "../../lib/event";
+
+const admin = getAdmin(Astro.cookies);
+if (!admin) return Astro.redirect("/admin/login");
+
+const events = await listEvents({ liveOnly: false, includePast: true });
+const wanted = Astro.url.searchParams.get("event");
+const stillOn = (e: (typeof events)[number]) => new Date(e.endsAt ?? e.startsAt).getTime() + 6 * 3600_000 > Date.now();
+const event = events.find((e) => e.slug === wanted) ?? events.find(stillOn) ?? events.at(-1);
+---
+
+<AdminLayout title="Guests" admin={admin} current="guests">
+  {
+    !event ? (
+      <section class="wrap hero">
+        <h1 class="title">No events</h1>
+        <p class="lede">Create an event first.</p>
+      </section>
+    ) : (
+      <div class="wrap guests" data-guests data-slug={event.slug} data-event={event.id}>
+        <h1 class="title">Guests</h1>
+
+        <form method="get" class="guests__pick">
+          <label class="field__label" for="event">Event</label>
+          <select class="field__input" id="event" name="event" data-pick>
+            {events.map((e) => (
+              <option value={e.slug} selected={e.id === event.id}>
+                {e.name} · {formatEventDay(e.startsAt)}
+              </option>
+            ))}
+          </select>
+          <noscript><button class="btn btn--secondary" type="submit">Switch</button></noscript>
+        </form>
+
+        <p class="guests__counts" aria-live="polite" data-counts>Loading guests</p>
+
+        <div class="guests__tabs" role="group" aria-label="Show guests">
+          <button class="chip" type="button" data-tab="notArrived" aria-pressed="true">Not arrived</button>
+          <button class="chip" type="button" data-tab="inside" aria-pressed="false">Inside</button>
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="search">Search</label>
+          <input class="field__input" id="search" type="search" placeholder="Name, email, phone or ticket ID" autocomplete="off" data-search />
+        </div>
+
+        <ul class="guests__list" data-list></ul>
+        <p class="muted" data-empty hidden>Nobody here.</p>
+      </div>
+    )
+  }
+
+  <script>
+    type Guest = {
+      code: string;
+      ticket_id: string;
+      name: string;
+      email: string;
+      phone: string | null;
+      status: "CONFIRMED" | "CHECKED_IN" | "CANCELLED";
+      checked_in_at: string | null;
+      checked_in_by: string | null;
+    };
+    type Data = { counts: { total: number; inside: number; notArrived: number }; inside: Guest[]; notArrived: Guest[] };
+
+    const pick = document.querySelector<HTMLSelectElement>("[data-pick]");
+    pick?.addEventListener("change", () => pick.form?.submit());
+
+    const root = document.querySelector<HTMLElement>("[data-guests]");
+    if (root) {
+      const slug = root.dataset.slug!;
+      const countsEl = root.querySelector<HTMLElement>("[data-counts]")!;
+      const list = root.querySelector<HTMLUListElement>("[data-list]")!;
+      const empty = root.querySelector<HTMLElement>("[data-empty]")!;
+      const search = root.querySelector<HTMLInputElement>("[data-search]")!;
+      const tabs = [...root.querySelectorAll<HTMLButtonElement>("[data-tab]")];
+
+      let data: Data | null = null;
+      let tab: "notArrived" | "inside" = "notArrived";
+      const eventId = root.dataset.event!;
+
+      const clock = (iso: string) =>
+        new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Copenhagen" });
+      const phoneText = (p: string | null) => {
+        const m = p?.match(/^\+45(\d{2})(\d{2})(\d{2})(\d{2})$/);
+        return m ? `+45 ${m[1]} ${m[2]} ${m[3]} ${m[4]}` : (p ?? "");
+      };
+
+      function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text; // always text, never HTML
+        return node;
+      }
+
+      function render() {
+        if (!data) return;
+        countsEl.innerHTML = "";
+        countsEl.append(
+          el("strong", "white", String(data.counts.inside)),
+          " inside · ",
+          el("strong", "white", String(data.counts.notArrived)),
+          ` not arrived · ${data.counts.total} tickets`,
+        );
+        tabs.forEach((t) => t.setAttribute("aria-pressed", String(t.dataset.tab === tab)));
+
+        const q = search.value.trim().toLowerCase();
+        const digits = q.replace(/\D/g, "");
+        const matches = (g: Guest) =>
+          !q ||
+          [g.name, g.email, g.ticket_id].some((v) => v.toLowerCase().includes(q)) ||
+          (digits.length >= 3 && (g.phone ?? "").replace(/\D/g, "").includes(digits));
+        const rows = data[tab].filter(matches);
+
+        list.replaceChildren(
+          ...rows.map((g) => {
+            const li = el("li", "guest");
+            const info = el("div", "guest__info");
+            info.append(
+              el("p", "guest__name", g.name),
+              el("p", "guest__id", g.ticket_id),
+              el("p", "guest__line", g.status === "CHECKED_IN" && g.checked_in_at ? `In ${clock(g.checked_in_at)} · ${g.checked_in_by ?? ""}` : g.email),
+              el("p", "guest__line", phoneText(g.phone)),
+            );
+            const button = el("button", "btn btn--secondary guest__btn", g.status === "CHECKED_IN" ? "Undo" : "Check in");
+            button.type = "button";
+            button.addEventListener("click", async () => {
+              if (g.status !== "CHECKED_IN" && !confirm(`Check in ${g.name} without scanning?`)) return;
+              button.disabled = true;
+              await act(g);
+            });
+            li.append(info, button);
+            return li;
+          }),
+        );
+        empty.hidden = rows.length > 0;
+      }
+
+      async function act(g: Guest) {
+        if (g.status === "CHECKED_IN") {
+          await fetch("/api/admin/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: g.code }) });
+        } else {
+          await fetch("/api/admin/checkin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: g.code, event: eventId }),
+          });
+        }
+        await load();
+      }
+
+      async function load() {
+        try {
+          const res = await fetch(`/api/admin/guests?event=${encodeURIComponent(slug)}`, { cache: "no-store" });
+          if (res.status === 401) {
+            location.href = "/admin/login";
+            return;
+          }
+          if (res.ok) {
+            data = (await res.json()) as Data;
+            render();
+          }
+        } catch {
+          // Offline for a moment: keep what is on screen.
+        }
+      }
+
+      tabs.forEach((t) =>
+        t.addEventListener("click", () => {
+          tab = t.dataset.tab as typeof tab;
+          render();
+        }),
+      );
+      search.addEventListener("input", render);
+      void load();
+      // Refresh so several door staff see the same picture.
+      setInterval(load, 5000);
+    }
+  </script>
+</AdminLayout>

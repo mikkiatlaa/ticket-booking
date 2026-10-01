@@ -1,0 +1,33 @@
+---
+import "../styles/global.css";
+import AdminBar from "../components/AdminBar.astro";
+
+interface Props {
+  title: string;
+  admin: string | null;
+  current?: "scan" | "guests";
+}
+
+const { title, admin, current } = Astro.props;
+// Admin pages show live guest data: never keep a copy.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#571fff" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title} · Admin</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="admin">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <AdminBar admin={admin} current={current} />
+    <main id="main">
+      <slot />
+    </main>
+  </body>
+</html>
